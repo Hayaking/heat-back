@@ -1,0 +1,178 @@
+package net;
+
+import java.io.*;
+import java.net.*;
+import java.util.*;
+
+import entity.Customer;
+import entity.HeatData;
+import service.CustomerService;
+import service.HeatDataService;
+
+public class SocketServer {
+	private CustomerService customerService;
+	private HeatDataService heatDataService;
+	private Map<String, Customer> customerMap;
+	private ServerSocket serverSocket;
+	private List<Thread> threadList = new ArrayList<Thread>();
+	private List<Socket> socketList = new ArrayList<Socket>();
+
+	public SocketServer() {
+	}
+
+	public void start(){
+		customerMap = customerService.findCustomerMap();
+		Thread t = new Thread(new MainHandler());
+		t.start();
+		threadList.add(t);
+	}
+
+	public class MainHandler implements Runnable {
+	     public MainHandler(){
+ 	         try {
+				serverSocket = new ServerSocket(5005);
+			} catch (IOException e) {
+				e.printStackTrace();
+			}	     
+		 }
+		 public void run() {
+		     Socket clientSocket = null;
+			 while (true) {
+				try {
+				    clientSocket = serverSocket.accept();
+				} catch (Exception ex) {
+			        ex.printStackTrace();
+		        }
+				Thread t = new Thread(new ClientHandler(clientSocket));
+				t.start();
+				threadList.add(t);
+				socketList.add(clientSocket);
+		     }
+	     }
+	} 
+	public class ClientHandler implements Runnable {
+
+		private Socket clientSocket;
+		private DataInputStream input;
+		private DataOutputStream output;
+		private byte[] inData = new byte[45];
+		private byte[] outData = null;
+		
+		private String gprsId;
+		private String addr;
+		private String custName;	
+
+		public ClientHandler(Socket clientSocket) {
+			this.clientSocket = clientSocket;
+			try {
+				input = new DataInputStream(clientSocket.getInputStream());
+				output = new DataOutputStream(clientSocket.getOutputStream());
+			} catch (Exception ex) {
+				ex.printStackTrace();
+			}
+
+		}
+
+		public void run() {
+			String inStr;
+			try {
+				while (true) {
+					input.read(inData);
+					inStr = HexUtil.bytesToString(inData);
+					if (inStr.substring(0, 8).equals("FF0D0901")) {
+						gprsId = HexUtil.hexToASCII(inStr.substring(8, 30));
+						custName =customerMap.get(gprsId).getCustName();
+						addr = Integer.toHexString(customerMap.get(gprsId).getAddr());
+						if(addr.length()==1)
+						    addr = "0"+addr;
+						initOutData();
+						System.out.println(">>[" +gprsId + "]");
+					} else {
+						if (inStr.length() == 90
+								&& HexUtil.crc16(inData).equals("0000"))
+							saveInData(inStr);
+					}
+					
+					if(gprsId != null){
+						Thread.sleep(180000);
+						output.write(outData, 0, outData.length);
+					    output.flush();			    
+					}
+				
+				} // close while
+			} catch (Exception ex) {
+				ex.printStackTrace();
+			} finally {
+				try {
+					clientSocket.close();
+				} catch (Exception ex) {
+				}
+			}
+		} // close run
+
+		private synchronized void saveInData(String inStr) {
+			HeatData heatData = new HeatData();
+			heatData.setAddr(Integer.parseInt(addr,16));
+			heatData.setCustName(custName);
+			heatData.setFlow(HexUtil.hexStrToFloat(inStr.substring(6, 14)));
+			heatData.setTemperature(HexUtil.hexStrToFloat(inStr.substring(14,
+					22)));
+			heatData
+					.setPressure(HexUtil.hexStrToFloat(inStr.substring(22, 30)));
+			heatData.setTotalFlow(HexUtil
+					.hexStrToFloat(inStr.substring(62, 70)));
+			heatData.setMonthFlow(HexUtil
+					.hexStrToFloat(inStr.substring(70, 78)));
+			heatData.setDayFlow(HexUtil.hexStrToFloat(inStr.substring(78, 86)));
+			heatData.setAcquireTime(new Date());
+			heatDataService.addHeatData(heatData);
+			System.out.println("----------------------");
+			System.out.println("手机号=" + gprsId);
+			System.out.println("瞬时流量="
+					+ HexUtil.hexStrToFloat(inStr.substring(6, 14)));
+			System.out.println("温度="
+					+ HexUtil.hexStrToFloat(inStr.substring(14, 22)));
+			System.out.println("压力="
+					+ HexUtil.hexStrToFloat(inStr.substring(22, 30)));
+			System.out.println("总累计流量="
+					+ HexUtil.hexStrToFloat(inStr.substring(62, 70)));
+			System.out.println("月累计流量="
+					+ HexUtil.hexStrToFloat(inStr.substring(70, 78)));
+			System.out.println("日累计流量="
+					+ HexUtil.hexStrToFloat(inStr.substring(78, 86)));
+		}
+
+		private void initOutData() {		    
+			outData = HexUtil.stringToBytes(addr + "03000000140000");
+			String crc = HexUtil.crc16(Arrays.copyOf(outData, 6));
+			// CRC-L
+			outData[6] = (byte) Integer.parseInt(crc.substring(2), 16);
+			// CRC-H
+			outData[7] = (byte) Integer.parseInt(crc.substring(0, 2), 16);
+		}
+	} // close inner class
+
+	public void interrupt(){
+    	for(Socket s :socketList){
+			try {
+				s.close();
+			} catch (Exception e) {
+				e.printStackTrace();
+			}
+		}
+		for(Thread t : threadList)
+		    t.interrupt();
+	}
+	public static void main(String[] args) {
+		new SocketServer();
+	}
+	
+	public void setHeatDataService(HeatDataService heatDataService) {
+		this.heatDataService = heatDataService;
+	}
+
+	public void setCustomerService(CustomerService customerService) {
+		this.customerService = customerService;
+	}
+
+}

@@ -1,0 +1,20 @@
+server:
+  port: 8081
+spring:
+  main:
+    allow-bean-definition-overriding: true
+  datasource:
+      #zookeeper ip
+      url: jdbc:phoenix:hadoop-master:2181
+      driver-class-name: org.apache.phoenix.jdbc.PhoenixDriver
+      type: com.zaxxer.hikari.HikariDataSource
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: false
+    cache-enabled: false
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+logging:
+  level:
+    root: INFO
